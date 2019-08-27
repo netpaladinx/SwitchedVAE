@@ -5,36 +5,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def gaussian_total_correlation(z, z_mean, z_logvar, N):
-    # samples: (x_i, z_i), i = 1, ..., B
-    # E_z[log q(z)] ~= 1/B sum_i{ log(sum_j q(z_i|x_j)) - log(N*B) }
-    #   q(z_i|x_j) = prod_d q(z_i^d|x_j)
-    # E_z[log prod_d q(z^d)] ~= 1/B sum_i{ sum_d log(sum_j q(z_i^d|x_j)) - D * log(N*B) }
-
-    B = z.size(0)
-
-    # compute log(q(z_i^d|x_j))
-    diff = z.unsqueeze(1) - z_mean.unsqueeze(0)  # B (for i) x B (for j) x n_latents
-    inv_sigma = torch.exp(-z_logvar.unsqueeze(0))  # 1 (for i) x B (for j) x n_latents
-    normalization = math.log(2 * math.pi)  # 1
-    log_q_zi_d_xj = -0.5 * (diff * diff * inv_sigma + z_logvar + normalization)  # B (for i) x B (for j) x n_latents
-
-    # compute log q(z_i^d) = log(sum_j q(z_i^d|x_j) - log(N*B)
-    log_q_zi_d = log_q_zi_d_xj.logsumexp(1) - math.log(N * B)  # B (for i) x n_latent
-
-    # compute i.i.d. log q(z_i) = log prod_d q(z_i^d) = sum log q(z_i^d)
-    log_q_zi_iid = log_q_zi_d.sum(1)  # B (for i)
-
-    # compute log q(z_i|x_j) = log(prod_d q(z_i^d|x_j))
-    log_q_zi_xj = log_q_zi_d_xj.sum(2)  # B (for i) x B (for j)
-
-    # compute log q(z_i) = log(sum_j q(z_i|x_j)) - log(N*B) (the constant term ignored)
-    log_q_zi = log_q_zi_xj.logsumexp(1) - math.log(N * B)  # B (for i)
-
-    # compute 1/B sum_i{log q(z_i) - log q(z_i)_iid}
-    return torch.mean(log_q_zi - log_q_zi_iid)  # 1
-
-
 def gaussian_kl_divergence(z_mean, z_logvar):
     # 1/B sum_i{ 1/2 * sum_d{ mu_d^2 + sigma_d^2 - log(sigma_d^2) - 1 } }
     kl_i = 0.5 * torch.sum(z_mean * z_mean + z_logvar.exp() - z_logvar - 1, 1)  # B
@@ -101,11 +71,10 @@ class DeconvDecoder(nn.Module):
         return out
 
 
-class BetaTCVAE(nn.Module):
-    def __init__(self, beta, img_channels, n_latents, ds_size):
-        super(BetaTCVAE, self).__init__()
+class BetaVAE(nn.Module):
+    def __init__(self, beta, img_channels, n_latents):
+        super(BetaVAE, self).__init__()
         self.beta = beta
-        self.ds_size = ds_size
         self.encoder = ConvEncoder(img_channels, n_latents)
         self.decoder = DeconvDecoder(img_channels, n_latents)
 
@@ -115,10 +84,9 @@ class BetaTCVAE(nn.Module):
         recon_x = self.decoder(z)
         return recon_x, z, z_mean, z_logvar
 
-    def loss(self, x, recon_x, z, z_mean, z_logvar):
+    def loss(self, x, recon_x, z_mean, z_logvar):
         recon_loss = bernoulli_reconstruction_loss(recon_x, x)
         kl_loss = gaussian_kl_divergence(z_mean, z_logvar)
-        tc_loss = gaussian_total_correlation(z, z_mean, z_logvar, self.ds_size)
-        loss = recon_loss + kl_loss + (self.beta - 1) * tc_loss
+        loss = recon_loss + self.beta * kl_loss
         neg_elbo = recon_loss + kl_loss
-        return loss, neg_elbo, recon_loss, kl_loss, tc_loss
+        return loss, neg_elbo, recon_loss, kl_loss

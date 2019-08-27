@@ -9,7 +9,7 @@ import torch
 import torch.optim as optim
 
 from datasets import get_data_loader
-from model_beta_tc_vae import BetaTCVAE
+from model_beta_vae import BetaVAE
 from helper import trim_axs
 
 
@@ -25,8 +25,8 @@ IMG_CHANNELS = 1
 
 PRINT_FREQ = 100
 SAVE_FREQ = 200 # 10000
-SAVE_DIR = './checkpoints/beta_tc_vae'
-OUTPUT_DIR = './output/beta_tc_vae'
+SAVE_DIR = './checkpoints/beta_vae'
+OUTPUT_DIR = './output/beta_vae'
 
 
 def train(train_loader, model, optimizer, device, save_dir):
@@ -37,7 +37,7 @@ def train(train_loader, model, optimizer, device, save_dir):
         _, inputs = batch
         x = inputs.to(device).float()
         recon_x, z, z_mean, z_logvar = model(x)
-        loss, neg_elbo, recon_loss, kl_loss, tc_loss = model.loss(x, recon_x, z, z_mean, z_logvar)
+        loss, neg_elbo, recon_loss, kl_loss = model.loss(x, recon_x, z_mean, z_logvar)
 
         optimizer.zero_grad()
         loss.backward()
@@ -45,12 +45,12 @@ def train(train_loader, model, optimizer, device, save_dir):
 
         step = i + 1
         if step % PRINT_FREQ == 0:
-            print('[Step %d] loss: %.4f, neg_elbo: %.4f, recon_loss: %.4f, kl_loss: %.4f, tc_loss: %.4f' %
-                  (step, loss, neg_elbo, recon_loss, kl_loss, tc_loss))
+            print('[Step %d] loss: %.4f, neg_elbo: %.4f, recon_loss: %.4f, kl_loss: %.4f' %
+                  (step, loss, neg_elbo, recon_loss, kl_loss))
         if step % SAVE_FREQ == 0:
             path = os.path.join(save_dir, 'step-%d.ckpt' % step)
             torch.save({'step': step, 'loss': loss, 'neg_elbo': neg_elbo,
-                        'recon_loss': recon_loss, 'kl_loss': kl_loss, 'tc_loss': tc_loss,
+                        'recon_loss': recon_loss, 'kl_loss': kl_loss,
                         'model_state_dict': model.state_dict(),
                         'optimizer_state_dict': optimizer.state_dict()}, path)
             ckpt_paths.append(path)
@@ -103,7 +103,7 @@ def run(beta=10, seed=1234):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     train_loader, ds = get_data_loader(DATASET_NAME, BATCH_SIZE, N_STEPS)
-    model = BetaTCVAE(beta, IMG_CHANNELS, N_LATENTS, ds.size).to(device)
+    model = BetaVAE(beta, IMG_CHANNELS, N_LATENTS).to(device)
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, betas=(ADAM_BETA1, ADAM_BETA2))
     ckpt_paths = train(train_loader, model, optimizer, device, save_dir)
 
@@ -118,5 +118,5 @@ def run(beta=10, seed=1234):
 
 
 if __name__ == '__main__':
-    beta_choices = [1, 2, 4, 6, 8, 10]
+    beta_choices = [1, 2, 4, 6, 8, 16]
     run()

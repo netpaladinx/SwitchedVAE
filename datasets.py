@@ -21,29 +21,33 @@ ground_truth_data_names = ('dsprites_full', 'dsprites_noshape', 'color_dsprites'
 
 
 class GroundTruthDataset(torch_data.dataset.Dataset):
-    def __init__(self, name, seed=0, ):
+    def __init__(self, name, n_samples, seed):
         assert name in ground_truth_data_names
         self.name = name
         self.seed = seed
         self.random_state = np.random.RandomState(seed)
         self.dataset = named_data.get_named_ground_truth_data(self.name)
-        self.size = self.dataset.images
+        self.n_samples = n_samples
 
     def __len__(self):
-        return len(self.dataset.images)
+        return self.n_samples
 
     def __getitem__(self, item):
-        assert item < len(self)
+        assert item < self.n_samples
         factors, observation = self.dataset.sample(1, self.random_state)
         factors = factors[0]  # (numpy array) n_factors
         observation = torch.from_numpy(np.moveaxis(observation[0], 2, 0))  # (torch tensor) C x H x W
         return factors, observation
 
+    @property
+    def size(self):
+        return len(self.dataset.images)
 
-def get_data_loader(ds_name, batch_size, seed=0, n_workers=0, **kwargs):
-    ds = GroundTruthDataset(ds_name, seed=seed)
+
+def get_data_loader(ds_name, batch_size, n_steps, seed=0, n_workers=0, **kwargs):
+    ds = GroundTruthDataset(ds_name, batch_size * n_steps, seed=seed)
     loader = torch_data.dataloader.DataLoader(ds, batch_size=batch_size, shuffle=True, num_workers=n_workers, **kwargs)
-    return loader
+    return loader, ds
 
 
 def output_samples(ds_name, n_rows=10, n_cols=10, n_figures=10):
