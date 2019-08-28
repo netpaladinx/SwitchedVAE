@@ -149,6 +149,6 @@ def run_eval_visual(z_beta=10, y_beta=10, seed=1234):
 
 if __name__ == '__main__':
     #beta_choices = [1, 2, 4, 6, 8, 16]
-    run(z_beta=100, y_beta=5)
+    run(z_beta=10, y_beta=10)
 
     #run_eval_visual()

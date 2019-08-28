@@ -8,7 +8,7 @@ import torch
 import torch.optim as optim
 
 from datasets import get_data_loader
-from model_fc_switched_vae import FCSwitchedVAE
+from model_fc_switched_vae_v2 import FCSwitchedVAE
 from utils import plot_images
 from helper import new_dir
 
@@ -25,15 +25,15 @@ OUTPUT_DIR = './output'
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, default='dsprites_full')
 parser.add_argument('--channels', type=int, default=1)
-parser.add_argument('--save_dir', type=str, default='fc_switched_vae_4')
-parser.add_argument('--output_dir', type=str, default='fc_switched_vae')
+parser.add_argument('--save_dir', type=str, default='fc_switched_vae_v2')
+parser.add_argument('--output_dir', type=str, default='fc_switched_vae_v2')
 parser.add_argument('--batch_size', type=int, default=64)
 parser.add_argument('--n_steps', type=int, default=300000)
-parser.add_argument('--y_ce_beta', type=int, default=1)
-parser.add_argument('--y_phsic_beta', type=int, default=1)
-parser.add_argument('--y_mmd_beta', type=int, default=1)
-parser.add_argument('--z_beta', type=int, default=1)
-parser.add_argument('--z2_beta', type=int, default=10)
+parser.add_argument('--y_ce_beta', type=int, default=4)
+parser.add_argument('--y_phsic_beta', type=int, default=4)
+parser.add_argument('--y_mmd_beta', type=int, default=10)
+parser.add_argument('--z_beta', type=int, default=4)
+parser.add_argument('--z2_beta', type=int, default=100)
 
 args = parser.parse_args()
 args.save_dir = os.path.join(SAVE_DIR, args.save_dir, args.dataset)

@@ -96,7 +96,7 @@ def eval_visual(eval_loader, model, device, path, visual_dir):
             print(visual_path)
 
 
-def run(beta=10, seed=1234):
+def run(beta=50, seed=1234):
     save_dir = os.path.join(SAVE_DIR, DATASET_NAME)
     if os.path.exists(save_dir):
         shutil.rmtree(save_dir)
