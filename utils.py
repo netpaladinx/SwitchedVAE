@@ -1,10 +1,25 @@
 import os
+import shutil
 
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
-from helper import trim_axs
+
+import torch.nn as nn
+
+
+def trim_axs(axs, N):
+    axs = axs.flat
+    for ax in axs[N:]:
+        ax.remove()
+    return axs[:N]
+
+
+def new_dir(path):
+    if os.path.exists(path):
+        shutil.rmtree(path)
+    os.makedirs(path)
 
 
 def plot_images(images, n_rows, n_cols, path):
@@ -17,3 +32,13 @@ def plot_images(images, n_rows, n_cols, path):
     fig.savefig(path)
     plt.close(fig)
     print(path)
+
+
+class Lambda(nn.Module):
+    def __init__(self, fn, *args):
+        super(Lambda, self).__init__()
+        self.args = args
+        self.fn = fn
+
+    def forward(self, x):
+        return self.fn(x, *self.args)

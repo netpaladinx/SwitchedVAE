@@ -21,13 +21,13 @@ ground_truth_data_names = ('dsprites_full', 'dsprites_noshape', 'color_dsprites'
 
 
 class GroundTruthDataset(torch_data.dataset.Dataset):
-    def __init__(self, name, n_samples, seed):
+    def __init__(self, name, n_samples=0, seed=0):
         assert name in ground_truth_data_names
         self.name = name
         self.seed = seed
         self.random_state = np.random.RandomState(seed)
         self.dataset = named_data.get_named_ground_truth_data(self.name)
-        self.n_samples = n_samples
+        self.n_samples = len(self.dataset.images) if n_samples == 0 else n_samples
 
     def __len__(self):
         return self.n_samples
@@ -54,7 +54,7 @@ def output_samples(ds_name, n_rows=10, n_cols=10, n_figures=10):
     dir_path = os.path.join('output/samples', ds_name)
     if os.path.exists(dir_path):
         shutil.rmtree(dir_path)
-    os.mkdir(dir_path)
+    os.makedirs(dir_path)
 
     ds = GroundTruthDataset(ds_name)
     for i in range(n_figures):
