@@ -185,11 +185,13 @@ class DeconvDecoder(nn.Module):
     def forward(self, z2, ys_index, ys_hard, zs):
         out = self.fc_latent(z2)
 
-        for i, switch in enumerate(self.switches):
+        i = len(ys_index) - 1
+        for switch in self.fc_switches:
             y_index = ys_index[i]
             y_hard = ys_hard[i] if ys_hard is not None else None
             z = zs[i]
             out = switch(out, y_index, y_hard, z)
+            i -= 1
         out = F.relu(out)
 
         out = out.reshape(-1, 64, 4, 4)
