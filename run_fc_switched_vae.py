@@ -28,7 +28,7 @@ OUTPUT_DIR = './output/fc_switched_beta_vae'
 
 Y_CE_BETA = 1
 Y_PHSIC_BETA = 1
-Y_MMD_BETA = 1
+Y_MMD_BETA = 5
 Z_BETA = 1
 Z2_BETA = 10
 
