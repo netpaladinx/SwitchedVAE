@@ -8,9 +8,9 @@ import matplotlib.cm as cm
 import torch
 import torch.optim as optim
 
-from datasets import get_data_loader
+from data import get_data_loader
 from model_beta_vae import BetaVAE
-from helper import trim_axs
+from utils import trim_axs
 
 
 BATCH_SIZE = 64
@@ -20,8 +20,8 @@ LEARNING_RATE = 0.0001
 ADAM_BETA1 = 0.9
 ADAM_BETA2 = 0.999
 
-DATASET_NAME = 'dsprites_full'
-IMG_CHANNELS = 1
+DATASET_NAME = 'mpi3d_toy'
+IMG_CHANNELS = 3
 
 PRINT_FREQ = 100
 SAVE_FREQ = 10000
@@ -96,7 +96,7 @@ def eval_visual(eval_loader, model, device, path, visual_dir):
             print(visual_path)
 
 
-def run(beta=50, seed=1234):
+def run(beta=4, seed=1234):
     save_dir = os.path.join(SAVE_DIR, DATASET_NAME)
     if os.path.exists(save_dir):
         shutil.rmtree(save_dir)
@@ -123,7 +123,7 @@ def run_eval_visual(beta=10, seed=1234):
     save_dir = os.path.join(SAVE_DIR, DATASET_NAME)
 
     torch.manual_seed(seed)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = torch.device('cuda:3' if torch.cuda.is_available() else 'cpu')
 
     model = BetaVAE(beta, IMG_CHANNELS, N_LATENTS).to(device)
 

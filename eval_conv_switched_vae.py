@@ -1,81 +1,3 @@
-import os
-import argparse
-from collections import defaultdict
-
-import numpy as np
-import torch
-import torch.optim as optim
-
-from datasets import get_data_loader
-from model_conv_switched_vae import ConvSwitchedVAE
-from utils import plot_images, new_dir
-
-
-LEARNING_RATE = 0.0001
-ADAM_BETA1 = 0.9
-ADAM_BETA2 = 0.999
-
-PRINT_FREQ = 1
-SAVE_FREQ = 10000
-SAVE_DIR = './checkpoints'
-OUTPUT_DIR = './output'
-
-parser = argparse.ArgumentParser()
-parser.add_argument('--dataset', type=str, default='dsprites_full')
-parser.add_argument('--exp_id', type=int, default=0)
-parser.add_argument('--channels', type=int, default=1)
-parser.add_argument('--save_dir', type=str, default='fc_switched_vae')
-parser.add_argument('--output_dir', type=str, default='fc_switched_vae')
-parser.add_argument('--batch_size', type=int, default=64)
-parser.add_argument('--n_steps', type=int, default=300000)
-
-parser.add_argument('--y_ce_beta', type=int, default=1)
-parser.add_argument('--y_phsic_beta', type=int, default=1)
-parser.add_argument('--y_mmd_beta', type=int, default=1)
-parser.add_argument('--z_beta', type=int, default=1)
-parser.add_argument('--z2_beta', type=int, default=4)
-
-parser.add_argument('--n_branches', type=int, default=3)
-parser.add_argument('--backward_on_y_hard', action='store_true', default=False)
-
-args = parser.parse_args()
-args.exp_id = 'exp-%d' % args.exp_id
-args.save_dir = os.path.join(SAVE_DIR, args.save_dir, args.dataset, args.exp_id)
-args.output_dir = os.path.join(OUTPUT_DIR, args.output_dir, args.dataset, args.exp_id)
-
-
-def train(train_loader, model, optimizer, device, save_dir):
-    ckpt_paths = []
-    model.train()
-
-    for i, batch in enumerate(train_loader):
-        _, inputs = batch
-        x = inputs.to(device).float()
-        recon_x, z2, z2_mean, z2_logvar, ys_logits, ys_logits_2, ys_index, ys_hard, zs_mean, zs_logvar, zs = \
-            model(x, backward_on_y_hard=args.backward_on_y_hard)
-        loss, recon_loss, z2_kl_loss, z_kl_loss, y_ce_loss, y_phsic_loss, y_mmd_loss = \
-            model.loss(x, recon_x, z2_mean, z2_logvar, ys_logits, ys_logits_2, ys_hard, zs_mean, zs_logvar)
-
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-
-        step = i + 1
-        if step % PRINT_FREQ == 0:
-            print('[Step %d] loss: %.4f, recon_loss: %.4f, z2_kl_loss: %.4f, z_kl_loss: %.4f, y_ce_loss: %.4f, '
-                  'y_phsic_loss: %.4f, y_mmd_loss: %.4f' %
-                  (step, loss, recon_loss, z2_kl_loss, z_kl_loss, y_ce_loss, y_phsic_loss, y_mmd_loss))
-        if step % SAVE_FREQ == 0:
-            path = os.path.join(save_dir, 'step-%d.ckpt' % step)
-            torch.save({'step': step, 'loss': loss, 'recon_loss': recon_loss,
-                        'z2_kl_loss': z2_kl_loss,  'z_kl_loss': z_kl_loss,
-                        'y_ce_loss': y_ce_loss, 'y_phsic_loss': y_phsic_loss, 'y_mmd_loss': y_mmd_loss,
-                        'model_state_dict': model.state_dict(),
-                        'optimizer_state_dict': optimizer.state_dict()}, path)
-            ckpt_paths.append(path)
-    return ckpt_paths
-
-
 def eval_print_code(eval_loader, model, device, path):
     checkpoint = torch.load(path)
     step = checkpoint['step']
@@ -152,21 +74,7 @@ def eval_print_code(eval_loader, model, device, path):
 #             visual_path = os.path.join(visual_dir, 'step-%d-image-%d-y.png' % (step, i))
 #             plot_images(images, n_latents + 1, n_branches, visual_path)
 
-
-def run_train(seed=1234):
-    new_dir(args.save_dir)
-    torch.manual_seed(seed)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-    train_loader, ds = get_data_loader(args.dataset, args.batch_size, args.n_steps)
-    model = ConvSwitchedVAE(args.y_ce_beta, args.y_phsic_beta, args.y_mmd_beta, args.z_beta, args.z2_beta,
-                          args.channels, args.n_branches).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, betas=(ADAM_BETA1, ADAM_BETA2))
-    train(train_loader, model, optimizer, device, args.save_dir)
-
-
-def run_eval_print_code(seed=1234):
-    torch.manual_seed(seed)
+def run_eval_print_code():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = ConvSwitchedVAE(args.y_ce_beta, args.y_phsic_beta, args.y_mmd_beta, args.z_beta, args.z2_beta,
                             args.channels, args.n_branches).to(device)
@@ -196,9 +104,3 @@ def run_eval_print_code(seed=1234):
 #         if path[-5:] == '.ckpt':
 #             eval_loader, _ = get_data_loader(DATASET_NAME, 1, 100)
 #             eval_visual(eval_loader, model, device, path, visual_dir)
-
-
-if __name__ == '__main__':
-    run_train()
-    #run_eval_print_code()
-    #run_eval_visual()

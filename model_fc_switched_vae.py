@@ -85,6 +85,8 @@ class EncSwitchedFC(nn.Module):
         sp_sum = None
         for i in range(self.n_branches):
             sub_index = y_index.squeeze(1).eq(i).nonzero().squeeze(1)  # sub_B
+            if sub_index.size(0) == 0:
+                continue
             sub_z = z[:, i].index_select(0, sub_index).unsqueeze(1)  # sub_B x 1
             sub_out = out.index_select(0, sub_index)  # sub_B x n_dims
             sub_out = self.fcs[i](sub_out) * sub_z   # sub_B x n_dims
@@ -92,7 +94,7 @@ class EncSwitchedFC(nn.Module):
                 sub_y_hard = y_hard[:, i].index_select(0, sub_index).unsqueeze(1)  # sub_B x 1
                 sub_out = sub_out * sub_y_hard  # sub_B x n_dims
 
-            sp_out = torch.sparse_coo_tensor(sub_index.unsqueeze(0), sub_out, out.size())  # (sparse) B x n_dims
+            sp_out = torch.sparse_coo_tensor(sub_index.unsqueeze(0), sub_out, out.size(), device=sub_out.device)  # (sparse) B x n_dims
             sp_sum = sp_out if sp_sum is None else sp_sum + sp_out
         sp_sum = sp_sum.to_dense()  # B x n_dims
 
@@ -118,6 +120,8 @@ class DecSwitchedFC(nn.Module):
         sp_sum = None
         for i in range(self.n_branches):
             sub_index = y_index.squeeze(1).eq(i).nonzero().squeeze(1)  # sub_B
+            if sub_index.size(0) == 0:
+                continue
             sub_z = z.index_select(0, sub_index)  # sub_B x 1
             sub_out = out.index_select(0, sub_index)  # sub_B x n_dims
             sub_out = self.fcs[i](sub_out) * sub_z
@@ -125,7 +129,7 @@ class DecSwitchedFC(nn.Module):
                 sub_y_hard = y_hard[:, i].index_select(0, sub_index).unsqueeze(1)  # sub_B x 1
                 sub_out = sub_out * sub_y_hard  # sub_B x n_dims
 
-            sp_out = torch.sparse_coo_tensor(sub_index.unsqueeze(0), sub_out, out.size())  # (sparse) B x n_dims
+            sp_out = torch.sparse_coo_tensor(sub_index.unsqueeze(0), sub_out, out.size(), device=sub_out.device)  # (sparse) B x n_dims
             sp_sum = sp_out if sp_sum is None else sp_sum + sp_out
         sp_sum = sp_sum.to_dense()  # B x n_dims
 
@@ -133,17 +137,17 @@ class DecSwitchedFC(nn.Module):
 
 
 class ConvEncoder(nn.Module):
-    def __init__(self, in_channels, n_dims_sm, n_branches, n_switches):
+    def __init__(self, in_channels, n_branches, n_switches):
         super(ConvEncoder, self).__init__()
         self.conv1 = nn.Conv2d(in_channels, 32, 4, 2, padding=1)  # 3 x 64 x 64 --4x4+2--> 32 x 32 x 32
         self.conv2 = nn.Conv2d(32, 32, 4, 2, padding=1)  # 32 x 32 x 32 --4x4+2--> 32 x 16 x 16
         self.conv3 = nn.Conv2d(32, 64, 4, 2, padding=1)  # 32 x 16 x 16 --4x4+2--> 64 x 8 x 8
         self.conv4 = nn.Conv2d(64, 64, 4, 2, padding=1)  # 64 x 8 x 8 --4x4+2--> 64 x 4 x 4
-        self.switches = nn.ModuleList([EncSwitchedFC(1024, n_dims_sm, n_branches) for _ in range(n_switches)])
+        self.fc_switches = nn.ModuleList([EncSwitchedFC(1024, 6, n_branches) for _ in range(n_switches)])
         self.fc_mean = nn.Linear(1024, 10)
         self.fc_logvar = nn.Linear(1024, 10)
 
-    def forward(self, x):
+    def forward(self, x, backward_on_y_hard=False):
         out = F.relu(self.conv1(x))
         out = F.relu(self.conv2(out))
         out = F.relu(self.conv3(out))
@@ -153,8 +157,8 @@ class ConvEncoder(nn.Module):
         ys_logits, ys_index, ys_hard, zs_mean, zs_logvar, zs = [], [], [], [], [], []
         ys_logits_2 = []
         out2 = out
-        for switch in self.switches:
-            out, y_logits, y_index, y_hard, z_mean, z_logvar, z = switch(out)
+        for switch in self.fc_switches:
+            out, y_logits, y_index, y_hard, z_mean, z_logvar, z = switch(out, backward_on_y_hard=backward_on_y_hard)
             ys_logits.append(y_logits)
             ys_index.append(y_index)
             ys_hard.append(y_hard)
@@ -163,26 +167,27 @@ class ConvEncoder(nn.Module):
             zs.append(z)
 
             if self.training:
-                out2, y_logits_2, _, _, _, _, _ = switch(out2)
+                out2, y_logits_2, _, _, _, _, _ = switch(out2, backward_on_y_hard=backward_on_y_hard)
                 ys_logits_2.append(y_logits_2)
         out = F.relu(out)
 
         z2_mean = self.fc_mean(out)
         z2_logvar = self.fc_logvar(out)
+
         return z2_mean, z2_logvar, ys_logits, ys_logits_2, ys_index, ys_hard, zs_mean, zs_logvar, zs
 
 
 class DeconvDecoder(nn.Module):
-    def __init__(self, out_channels, n_dims_sm, n_branches, n_switches):
+    def __init__(self, out_channels, n_branches, n_switches):
         super(DeconvDecoder, self).__init__()
         self.fc_latent = nn.Linear(10, 1024)
-        self.switches = nn.ModuleList([DecSwitchedFC(1024, n_dims_sm, n_branches) for _ in range(n_switches)])
+        self.fc_switches = nn.ModuleList([DecSwitchedFC(1024, 6, n_branches) for _ in range(n_switches)])
         self.deconv1 = nn.ConvTranspose2d(64, 64, 4, 2, padding=1)
         self.deconv2 = nn.ConvTranspose2d(64, 32, 4, 2, padding=1)
         self.deconv3 = nn.ConvTranspose2d(32, 32, 4, 2, padding=1)
         self.deconv4 = nn.ConvTranspose2d(32, out_channels, 4, 2, padding=1)
 
-    def forward(self, z2, ys_index, ys_hard, zs):
+    def forward(self, z2, ys_index, ys_hard, zs, backward_on_y_hard=False):
         out = self.fc_latent(z2)
 
         i = len(ys_index) - 1
@@ -190,7 +195,7 @@ class DeconvDecoder(nn.Module):
             y_index = ys_index[i]
             y_hard = ys_hard[i] if ys_hard is not None else None
             z = zs[i]
-            out = switch(out, y_index, y_hard, z)
+            out = switch(out, y_index, y_hard, z, backward_on_y_hard=backward_on_y_hard)
             i -= 1
         out = F.relu(out)
 
@@ -203,7 +208,7 @@ class DeconvDecoder(nn.Module):
 
 
 class FCSwitchedVAE(nn.Module):
-    def __init__(self, y_ce_beta, y_phsic_beta, y_mmd_beta, z_beta, z2_beta, channels, n_dims_sm, n_branches, n_switches):
+    def __init__(self, y_ce_beta, y_phsic_beta, y_mmd_beta, z_beta, z2_beta, channels, n_branches, n_switches):
         super(FCSwitchedVAE, self).__init__()
         self.y_ce_beta = y_ce_beta
         self.y_phsic_beta = y_phsic_beta
@@ -211,13 +216,15 @@ class FCSwitchedVAE(nn.Module):
         self.z_beta = z_beta
         self.z2_beta = z2_beta
         self.n_branches = n_branches
-        self.encoder = ConvEncoder(channels, n_dims_sm, n_branches, n_switches)
-        self.decoder = DeconvDecoder(channels, n_dims_sm, n_branches, n_switches)
+        self.n_switches = n_switches
+        self.encoder = ConvEncoder(channels, n_branches, n_switches)
+        self.decoder = DeconvDecoder(channels, n_branches, n_switches)
 
-    def forward(self, x):
-        z2_mean, z2_logvar, ys_logits, ys_logits_2, ys_index, ys_hard, zs_mean, zs_logvar, zs = self.encoder(x)
+    def forward(self, x, backward_on_y_hard=False):
+        z2_mean, z2_logvar, ys_logits, ys_logits_2, ys_index, ys_hard, zs_mean, zs_logvar, zs = \
+            self.encoder(x, backward_on_y_hard=backward_on_y_hard)
         z2 = sample_from_gaussian(z2_mean, z2_logvar)
-        recon_x = self.decoder(z2, ys_index, ys_hard, zs)
+        recon_x = self.decoder(z2, ys_index, ys_hard, zs, backward_on_y_hard=backward_on_y_hard)
         return recon_x, z2, z2_mean, z2_logvar, ys_logits, ys_logits_2, ys_index, ys_hard, zs_mean, zs_logvar, zs
 
     def loss(self, x, recon_x, z2_mean, z2_logvar, ys_logits, ys_logits_2, ys_hard, zs_mean, zs_logvar):

@@ -1,5 +1,5 @@
 import os
-os.environ['DISENTANGLEMENT_LIB_DATA'] = './data'
+os.environ['DISENTANGLEMENT_LIB_DATA'] = './datasets'
 import shutil
 
 import numpy as np
@@ -87,7 +87,7 @@ if __name__ == '__main__':
     3 - position x (32 different values)
     4 - position y (32 different values)
     '''
-    # output_samples('dsprites_full', n_rows=5, n_cols=5, n_figures=40)
+    #output_samples('dsprites_full', n_rows=5, n_cols=5, n_figures=40)
 
     '''
     0 - scale (6 different values)
@@ -104,7 +104,7 @@ if __name__ == '__main__':
     3 - position x (32 different values)
     4 - position y (32 different values)
     '''
-    # output_samples('color_dsprites', n_rows=5, n_cols=5, n_figures=40)
+    output_samples('color_dsprites', n_rows=5, n_cols=5, n_figures=40)
 
     '''
     0 - shape (3 different values)

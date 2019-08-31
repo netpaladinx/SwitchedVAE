@@ -108,7 +108,8 @@ class EncSwitchedFC(nn.Module):
 class EncSwitchedConv(nn.Module):
     # Type-I: n_channels=32, n_channels_sm=4, ksize=2, fmap_size=32, switch_ksize=4, switch_stride=2
     # Type-II: n_channels=64, n_channels_sm=16, ksize=2, fmap_size=8, switch_ksize=4, switch_stride=1
-    def __init__(self, n_channels, n_channels_sm, n_branches, ksize, fmap_size, switch_ksize, switch_stride):
+    def __init__(self, n_channels, n_channels_sm, n_branches, ksize, fmap_size, switch_ksize, switch_stride,
+                 use_batchnorm=False):
         super(EncSwitchedConv, self).__init__()
         self.n_branches = n_branches
         self.convs = nn.ModuleList([nn.Sequential(U.conv2d(n_channels, n_channels_sm, ksize, 1, in_h_or_w=fmap_size),
@@ -116,6 +117,10 @@ class EncSwitchedConv(nn.Module):
                                                   nn.ReLU(),
                                                   U.conv2d(n_channels_sm, n_channels, ksize, 1, in_h_or_w=fmap_size),
                                                   nn.BatchNorm2d(n_channels))
+                                    if use_batchnorm else
+                                    nn.Sequential(U.conv2d(n_channels, n_channels_sm, ksize, 1, in_h_or_w=fmap_size),
+                                                  nn.ReLU(),
+                                                  U.conv2d(n_channels_sm, n_channels, ksize, 1, in_h_or_w=fmap_size))
                                     for _ in range(n_branches)])
         self.switch = nn.Sequential(U.conv2d(n_channels, 1, switch_ksize, switch_stride, in_h_or_w=fmap_size),
                                     nn.ReLU(),
@@ -185,7 +190,7 @@ class DecSwitchedFC(nn.Module):
 
 
 class DecSwitchedDeconv(nn.Module):
-    def __init__(self, n_channels, n_channels_sm, n_branches, ksize, fmap_size):
+    def __init__(self, n_channels, n_channels_sm, n_branches, ksize, fmap_size, use_batchnorm=False):
         super(DecSwitchedDeconv, self).__init__()
         self.n_branches = n_branches
         self.deconvs = nn.ModuleList([nn.Sequential(U.deconv2d(n_channels, n_channels_sm, ksize, 1, out_h_or_w=fmap_size),
@@ -193,6 +198,10 @@ class DecSwitchedDeconv(nn.Module):
                                                     nn.ReLU(),
                                                     U.deconv2d(n_channels_sm, n_channels, ksize, 1, out_h_or_w=fmap_size),
                                                     nn.BatchNorm2d(n_channels))
+                                      if use_batchnorm else
+                                      nn.Sequential(U.deconv2d(n_channels, n_channels_sm, ksize, 1, out_h_or_w=fmap_size),
+                                                    nn.ReLU(),
+                                                    U.deconv2d(n_channels_sm, n_channels, ksize, 1, out_h_or_w=fmap_size))
                                       for _ in range(n_branches)])
 
     def forward(self, x, y_index, y_hard, z, backward_on_y_hard=False):
@@ -218,16 +227,15 @@ class DecSwitchedDeconv(nn.Module):
 
 
 class ConvEncoder(nn.Module):
-    def __init__(self, in_channels, n_branches):
+    def __init__(self, in_channels, n_branches, use_batchnorm=False):
         super(ConvEncoder, self).__init__()
         self.conv1 = nn.Conv2d(in_channels, 32, 4, 2, padding=1)  # 3 x 64 x 64 --4x4+2--> 32 x 32 x 32
-        self.conv12_switches = nn.ModuleList([EncSwitchedConv(32, 6, 3, 2, 32, 4, 2) for _ in range(2)])
-        self.conv2 = nn.Sequential(nn.Conv2d(32, 32, 4, 2, padding=1, groups=32),
-                                   nn.Conv2d(32, 32, 1, 1))  # 32 x 32 x 32 --4x4+2--> 32 x 16 x 16
-        self.conv3 = nn.Conv2d(32, 64, 4, 2, padding=1)  # 32 x 16 x 16 --4x4+2--> 64 x 8 x 8
-        self.conv34_switches = nn.ModuleList([EncSwitchedConv(64, 16, 3, 2, 8, 4, 1) for _ in range(2)])
-        self.conv4 = nn.Sequential(nn.Conv2d(64, 64, 4, 2, padding=1, groups=32),
-                                   nn.Conv2d(64, 64, 1, 1))  # 64 x 8 x 8 --4x4+2--> 64 x 4 x 4
+        self.conv2 = nn.Conv2d(32, 32, 4, 2, padding=1)  # 32 x 32 x 32 --4x4+2--> 32 x 16 x 16
+        self.conv_switches = nn.ModuleList([EncSwitchedConv(32, 6, 3, 2, 16, 4, 1, use_batchnorm=use_batchnorm)
+                                            for _ in range(4)])
+        self.conv3 = nn.Sequential(nn.Conv2d(32, 32, 4, 2, padding=1, groups=32),
+                                   nn.Conv2d(32, 64, 1, 1))  # 32 x 16 x 16 --4x4+2--> 64 x 8 x 8
+        self.conv4 = nn.Conv2d(64, 64, 4, 2, padding=1)  # 64 x 8 x 8 --4x4+2--> 64 x 4 x 4
         self.fc_switches = nn.ModuleList([EncSwitchedFC(1024, 6, n_branches) for _ in range(6)])
         self.fc_mean = nn.Linear(1024, 10)
         self.fc_logvar = nn.Linear(1024, 10)
@@ -236,20 +244,10 @@ class ConvEncoder(nn.Module):
         ys_logits, ys_index, ys_hard, zs_mean, zs_logvar, zs = [], [], [], [], [], []
         ys_logits_2 = []
 
-        out = self.conv1(x)
-        for switch in self.conv12_switches:
-            out, y_logits, y_index, y_hard, z_mean, z_logvar, z = switch(out, backward_on_y_hard=backward_on_y_hard)
-            ys_logits.append(y_logits)
-            ys_index.append(y_index)
-            ys_hard.append(y_hard)
-            zs_mean.append(z_mean)
-            zs_logvar.append(z_logvar)
-            zs.append(z)
-        out = F.relu(out)
-        out = F.relu(self.conv2(out))
+        out = F.relu(self.conv1(x))
+        out = self.conv2(out)
 
-        out = self.conv3(out)
-        for switch in self.conv34_switches:
+        for switch in self.conv_switches:
             out, y_logits, y_index, y_hard, z_mean, z_logvar, z = switch(out, backward_on_y_hard=backward_on_y_hard)
             ys_logits.append(y_logits)
             ys_index.append(y_index)
@@ -258,6 +256,8 @@ class ConvEncoder(nn.Module):
             zs_logvar.append(z_logvar)
             zs.append(z)
         out = F.relu(out)
+
+        out = F.relu(self.conv3(out))
         out = self.conv4(out)
         out = out.reshape(-1, 1024)
 
@@ -275,18 +275,14 @@ class ConvEncoder(nn.Module):
         z2_logvar = self.fc_logvar(out)
 
         if self.training:
-            out = self.conv1(x)
-            for switch in self.conv12_switches:
-                out, y_logits_2, _, _, _, _, _ = switch(out, backward_on_y_hard=backward_on_y_hard)
-                ys_logits_2.append(y_logits_2)
-            out = F.relu(out)
-            out = F.relu(self.conv2(out))
+            out = F.relu(self.conv1(x))
+            out = self.conv2(out)
 
-            out = self.conv3(out)
-            for switch in self.conv34_switches:
+            for switch in self.conv_switches:
                 out, y_logits_2, _, _, _, _, _ = switch(out, backward_on_y_hard=backward_on_y_hard)
                 ys_logits_2.append(y_logits_2)
             out = F.relu(out)
+            out = F.relu(self.conv3(out))
             out = self.conv4(out)
             out = out.reshape(-1, 1024)
 
@@ -298,18 +294,17 @@ class ConvEncoder(nn.Module):
 
 
 class DeconvDecoder(nn.Module):
-    def __init__(self, out_channels, n_branches):
+    def __init__(self, out_channels, n_branches, use_batchnorm=False):
         super(DeconvDecoder, self).__init__()
         self.fc_latent = nn.Linear(10, 1024)
         self.fc_switches = nn.ModuleList([DecSwitchedFC(1024, 6, n_branches) for _ in range(6)])
-        self.deconv1 = nn.Sequential(nn.ConvTranspose2d(64, 64, 1, 1),
-                                     nn.ConvTranspose2d(64, 64, 4, 2, padding=1, groups=64))  # -> 64 x 8 x 8
-        self.deconv12_switches = nn.ModuleList([DecSwitchedDeconv(64, 16, 3, 2, 8) for _ in range(2)])
-        self.deconv2 = nn.ConvTranspose2d(64, 32, 4, 2, padding=1)
-        self.deconv3 = nn.Sequential(nn.ConvTranspose2d(32, 32, 1, 1),
-                                     nn.ConvTranspose2d(32, 32, 4, 2, padding=1, groups=32))  # -> 32 x 32 x 32
-        self.deconv34_switches = nn.ModuleList([DecSwitchedDeconv(32, 6, 3, 2, 32) for _ in range(2)])
-        self.deconv4 = nn.ConvTranspose2d(32, out_channels, 4, 2, padding=1)
+        self.deconv1 = nn.ConvTranspose2d(64, 64, 4, 2, padding=1)  # 64 x 4 x 4 -> 64 x 8 x 8
+        self.deconv2 = nn.Sequential(nn.ConvTranspose2d(64, 32, 1, 1),
+                                     nn.ConvTranspose2d(32, 32, 4, 2, padding=1, groups=32))  # 64 x 8 x 8 -> 32 x 16 x 16
+        self.deconv_switches = nn.ModuleList([DecSwitchedDeconv(32, 6, 3, 2, 16, use_batchnorm=use_batchnorm)
+                                              for _ in range(4)])
+        self.deconv3 = nn.ConvTranspose2d(32, 32, 4, 2, padding=1)  # 32 x 16 x 16 -> 32 x 32 x 32
+        self.deconv4 = nn.ConvTranspose2d(32, out_channels, 4, 2, padding=1)  # 32 x 32 x 32 -> out_channels x 64 x 64
 
     def forward(self, z2, ys_index, ys_hard, zs, backward_on_y_hard=False):
         out = self.fc_latent(z2)
@@ -324,30 +319,24 @@ class DeconvDecoder(nn.Module):
         out = F.relu(out)
 
         out = out.reshape(-1, 64, 4, 4)
-        out = self.deconv1(out)
-        for switch in self.deconv12_switches:
-            y_index = ys_index[i]
-            y_hard = ys_hard[i] if ys_hard is not None else None
-            z = zs[i]
-            out = switch(out, y_index, y_hard, z, backward_on_y_hard=backward_on_y_hard)
-            i -= 1
-        out = F.relu(out)
-        out = F.relu(self.deconv2(out))
+        out = F.relu(self.deconv1(out))
+        out = self.deconv2(out)
 
-        out = self.deconv3(out)
-        for switch in self.deconv34_switches:
+        for switch in self.deconv_switches:
             y_index = ys_index[i]
             y_hard = ys_hard[i] if ys_hard is not None else None
             z = zs[i]
             out = switch(out, y_index, y_hard, z, backward_on_y_hard=backward_on_y_hard)
             i -= 1
         out = F.relu(out)
+
+        out = F.relu(self.deconv3(out))
         out = self.deconv4(out)
         return out
 
 
 class ConvSwitchedVAE(nn.Module):
-    def __init__(self, y_ce_beta, y_phsic_beta, y_mmd_beta, z_beta, z2_beta, channels, n_branches):
+    def __init__(self, y_ce_beta, y_phsic_beta, y_mmd_beta, z_beta, z2_beta, channels, n_branches, use_batchnorm=False):
         super(ConvSwitchedVAE, self).__init__()
         self.y_ce_beta = y_ce_beta
         self.y_phsic_beta = y_phsic_beta
@@ -355,8 +344,8 @@ class ConvSwitchedVAE(nn.Module):
         self.z_beta = z_beta
         self.z2_beta = z2_beta
         self.n_branches = n_branches
-        self.encoder = ConvEncoder(channels, n_branches)
-        self.decoder = DeconvDecoder(channels, n_branches)
+        self.encoder = ConvEncoder(channels, n_branches, use_batchnorm=use_batchnorm)
+        self.decoder = DeconvDecoder(channels, n_branches, use_batchnorm=use_batchnorm)
 
     def forward(self, x, backward_on_y_hard=False):
         z2_mean, z2_logvar, ys_logits, ys_logits_2, ys_index, ys_hard, zs_mean, zs_logvar, zs = \

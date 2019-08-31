@@ -1,5 +1,6 @@
 import os
 import shutil
+import subprocess
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -16,7 +17,7 @@ def trim_axs(axs, N):
     return axs[:N]
 
 
-def new_dir(path):
+def mkdir(path):
     if os.path.exists(path):
         shutil.rmtree(path)
     os.makedirs(path)
@@ -32,6 +33,15 @@ def plot_images(images, n_rows, n_cols, path):
     fig.savefig(path)
     plt.close(fig)
     print(path)
+
+
+def grid2gif(image_str, output_gif, delay=100):
+    """Make GIF from images.
+    code from:
+        https://stackoverflow.com/questions/753190/programmatically-generate-video-or-animated-gif-in-python/34555939#34555939
+    """
+    str1 = 'convert -delay '+str(delay)+' -loop 0 ' + image_str  + ' ' + output_gif
+    subprocess.call(str1, shell=True)
 
 
 def get_padding(kernel_size, stride=None, h_or_w=None):
