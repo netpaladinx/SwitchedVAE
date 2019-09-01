@@ -12,6 +12,7 @@ from utils import mkdir
 
 SAVE_BASE = './checkpoints'
 OUTPUT_BASE = './output'
+VERSION = 'v2'
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--exp_id', type=int, default=0)
@@ -36,23 +37,25 @@ parser.add_argument('--z2_beta', type=int, default=4)
 
 parser.add_argument('--n_branches', type=int, default=3)
 parser.add_argument('--backward_on_y_hard', action='store_true', default=False)
+parser.add_argument('--use_batchnorm', action='store_true', default=False)
 
 parser.add_argument('--print_freq', type=int, default=100)
 parser.add_argument('--save_freq', type=int, default=10000)
 
 args = parser.parse_args()
 args.exp_id = 'exp-%d' % args.exp_id
+args.cuda_id = 'cuda:%d' % args.cuda_id
 args.save_dir = os.path.join(SAVE_BASE, args.save_dir, args.dataset, args.exp_id)
 args.output_dir = os.path.join(OUTPUT_BASE, args.output_dir, args.dataset, args.exp_id)
 
 
 def train():
     mkdir(args.save_dir)
-    device = torch.device('cuda:%d' % args.cuda_id if torch.cuda.is_available() else 'cpu')
+    device = torch.device(args.cuda_id if torch.cuda.is_available() else 'cpu')
 
     train_loader, ds = get_data_loader(args.dataset, args.batch_size, args.n_steps)
     model = ConvSwitchedVAE(args.y_ce_beta, args.y_phsic_beta, args.y_mmd_beta, args.z_beta, args.z2_beta,
-                            args.channels, args.n_branches).to(device)
+                            args.channels, args.n_branches, args.use_batchnorm).to(device)
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate, betas=(args.adam_beta1, args.adam_beta2))
 
     ckpt_paths = []

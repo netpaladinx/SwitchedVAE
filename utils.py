@@ -43,43 +43,6 @@ def grid2gif(image_str, output_gif, delay=100):
     str1 = 'convert -delay '+str(delay)+' -loop 0 ' + image_str  + ' ' + output_gif
     subprocess.call(str1, shell=True)
 
-
-def get_padding(kernel_size, stride=None, h_or_w=None):
-    unused = (h_or_w - 1) % stride if h_or_w and stride else 0
-    pad_total = kernel_size - 1
-    pad_beg = pad_total // 2
-    pad_end = pad_total - pad_beg - unused
-    return (pad_beg, pad_end, pad_beg, pad_end)
-
-
-def slice2d(x, padding):
-    pad_t, pad_b, pad_l, pad_r = padding
-    return x.narrow(2, pad_t, x.size(2) - pad_t - pad_b).narrow(3, pad_l, x.size(3) - pad_l - pad_r)
-
-
-class Lambda(nn.Module):
-    def __init__(self, fn, *args):
-        super(Lambda, self).__init__()
-        self.args = args
-        self.fn = fn
-
-    def forward(self, x):
-        return self.fn(x, *self.args)
-
-
-def conv2d(in_channels, out_channels, kernel_size, stride, bias=True, in_h_or_w=None):
-    if kernel_size > 1:
-        return nn.Sequential(
-            nn.ZeroPad2d(get_padding(kernel_size, stride, in_h_or_w)),
-            nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, bias=bias))
-    else:
-        return nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, bias=bias)
-
-
-def deconv2d(in_channels, out_channels, kernel_size, stride, bias=True, out_h_or_w=None):
-    if kernel_size > 1:
-        return nn.Sequential(
-            nn.ConvTranspose2d(in_channels, out_channels, kernel_size, stride=stride, bias=bias),
-            Lambda(slice2d, get_padding(kernel_size, stride, out_h_or_w)))
-    else:
-        return nn.ConvTranspose2d(in_channels, out_channels, kernel_size, stride=stride, bias=bias)
+def append(lists, elems):
+    for ls, e in zip(lists, elems):
+        ls.append(e)

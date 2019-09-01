@@ -13,12 +13,13 @@ from utils import mkdir, grid2gif
 
 
 parser = argparse.ArgumentParser()
+parser.add_argument('--model', type=str, default='fc_switched_vae')
+parser.add_argument('--version', type=str, default='v2')
 parser.add_argument('--exp_id', type=int, default=0)
 parser.add_argument('--seed', type=int, default=1234)
 parser.add_argument('--cuda_id', type=int, default=0)
 parser.add_argument('--dataset', type=str, default='dsprites_full')
 parser.add_argument('--channels', type=int, default=1)
-parser.add_argument('--model', type=str, default='fc_switched_vae')
 parser.add_argument('--save_dir', type=str, default='./checkpoints')
 parser.add_argument('--output_dir', type=str, default='./output')
 
@@ -30,17 +31,19 @@ parser.add_argument('--adam_beta1', type=float, default=0.9)
 parser.add_argument('--adam_beta2', type=float, default=0.999)
 
 parser.add_argument('--y_ce_beta', type=int, default=1)
-parser.add_argument('--y_phsic_beta', type=int, default=1)
+parser.add_argument('--y_hsic_beta', type=int, default=1)
 parser.add_argument('--y_mmd_beta', type=int, default=2)
-parser.add_argument('--z_beta', type=int, default=1)
-parser.add_argument('--z2_beta', type=int, default=4)
+parser.add_argument('--z_kl_beta', type=int, default=1)
+parser.add_argument('--z_hsic_beta', type=int, default=1)
+parser.add_argument('--z2_kl_beta', type=int, default=4)
 
 parser.add_argument('--n_branches', type=int, default=3)
-parser.add_argument('--n_switches', type=int, default=6)
-parser.add_argument('--backward_on_y_hard', action='store_true', default=False)
-
-parser.add_argument('--print_freq', type=int, default=10)
-parser.add_argument('--save_freq', type=int, default=100)
+parser.add_argument('--n_switches', type=int, default=5)
+parser.add_argument('--n_dims_sm', type=int, default=32)
+parser.add_argument('--n_latent_z2', type=int, default=10)
+parser.add_argument('--fc_operator_type', type=str, default='I')
+parser.add_argument('--fc_switch_type', type=str, default='I')
+parser.add_argument('--backward_on_y', action='store_true', default=False)
 
 parser.add_argument('--port', type=int, default=8097)
 parser.add_argument('--hostname', type=str, default='http://localhost')
@@ -51,8 +54,9 @@ parser.add_argument('--ckpts', type=str, default='step-9400.ckpt')
 
 args = parser.parse_args()
 args.exp_id = 'exp-%d' % args.exp_id
-args.save_dir = os.path.join(args.save_dir, args.model, args.dataset, args.exp_id)
-args.output_dir = os.path.join(args.output_dir, args.model, args.dataset, args.exp_id)
+args.cuda_id = 'cuda:%d' % args.cuda_id
+args.save_dir = os.path.join(args.save_dir, args.model, args.version, args.dataset, args.exp_id)
+args.output_dir = os.path.join(args.output_dir, args.model, args.version, args.dataset, args.exp_id)
 args.ckpts = args.ckpts.split(',') if args.ckpts else []
 
 # def eval_print_code(eval_loader, model, device, path):
@@ -82,51 +86,52 @@ args.ckpts = args.ckpts.split(',') if args.ckpts else []
 #                 print(k1, k2, counts[k1][k2])
 
 
-def copy_code(z2, ys_index, ys_hard, zs):
+def copy_code(z2, ys_idx, ys, zs):
     z2_copy = z2.clone()
-    ys_index_copy = [y_index.clone() for y_index in ys_index]
-    ys_hard_copy = [y_hard.clone() for y_hard in ys_hard]
+    ys_idx_copy = [y_idx.clone() for y_idx in ys_idx]
+    ys_copy = [y.clone() for y in ys]
     zs_copy = [z.clone() for z in zs]
-    return z2_copy, ys_index_copy, ys_hard_copy, zs_copy
+    return z2_copy, ys_idx_copy, ys_copy, zs_copy
 
 
-def traversal(z2, ys_index, ys_hard, zs, n_branches, n_switches, limit=3, inter=1):
+def traversal(z2, ys_idx, ys, zs, n_branches, n_switches, limit, inter):
     ''' z2: 1 x 10
-        ys_index: [ 1 x 1 ] x 6 (n_switches)
-        ys_hard: [ 1 x 3 (n_branches) ] x 6
-        zs: [ 1 x 1 ] x 6
+        ys_idx: [ 1 x 1 ] x n_switches
+        ys: [ 1 x n_branches ] x 6
+        zs: [ 1 x n_branches ] x 6
     '''
     interpolation = torch.arange(-limit, limit + 1e-4, inter)
     codes = []
     for i in range(n_switches):
         for j in range(n_branches):
             for val in interpolation:
-                z2_copy, ys_index_copy, ys_hard_copy, zs_copy = copy_code(z2, ys_index, ys_hard, zs)
-                ys_index_copy[i][0, 0] = j
-                ys_hard_copy[i] = torch.zeros_like(ys_hard_copy[i])
-                ys_hard_copy[i][0, j] = 1
-                zs_copy[i][0, 0] = val
-                codes.append((z2_copy, ys_index_copy, ys_hard_copy, zs_copy))
+                z2_copy, ys_idx_copy, ys_copy, zs_copy = copy_code(z2, ys_idx, ys, zs)
+                ys_idx_copy[i][0, 0] = j
+                ys_copy[i] = torch.zeros_like(ys_copy[i])
+                ys_copy[i][0, j] = 1
+                zs_copy[i][0, j] = val
+                codes.append((z2_copy, ys_idx_copy, ys_copy, zs_copy))
     for i in range(z2.size(1)):
         for val in interpolation:
-            z2_copy, ys_index_copy, ys_hard_copy, zs_copy = copy_code(z2, ys_index, ys_hard, zs)
+            z2_copy, ys_idx_copy, ys_copy, zs_copy = copy_code(z2, ys_idx, ys, zs)
             z2_copy[0, i] = val
-            codes.append((z2_copy, ys_index_copy, ys_hard_copy, zs_copy))
-    z2_copy, ys_index_copy, ys_hard_copy, zs_copy = zip(*codes)
+            codes.append((z2_copy, ys_idx_copy, ys_copy, zs_copy))
+    z2_copy, ys_idx_copy, ys_copy, zs_copy = zip(*codes)
     z2_copy = torch.cat(z2_copy, 0)
-    ys_index_copy = [torch.cat([ys_index_cp[i] for ys_index_cp in ys_index_copy], 0) for i in range(n_switches)]
-    ys_hard_copy = [torch.cat([ys_hard_cp[i] for ys_hard_cp in ys_hard_copy], 0) for i in range(n_switches)]
+    ys_idx_copy = [torch.cat([ys_idx_cp[i] for ys_idx_cp in ys_idx_copy], 0) for i in range(n_switches)]
+    ys_copy = [torch.cat([ys_cp[i] for ys_cp in ys_copy], 0) for i in range(n_switches)]
     zs_copy = [torch.cat([zs_cp[i] for zs_cp in zs_copy], 0) for i in range(n_switches)]
-    return z2_copy, ys_index_copy, ys_hard_copy, zs_copy, interpolation
+    return z2_copy, ys_idx_copy, ys_copy, zs_copy, interpolation
 
 
 def eval_visual(vis, n_samples=10):
     visual_dir = os.path.join(args.output_dir, 'visual')
     mkdir(visual_dir)
-    device = torch.device('cuda:%d' % args.cuda_id if torch.cuda.is_available() else 'cpu')
+    device = torch.device(args.cuda_id if torch.cuda.is_available() else 'cpu')
 
-    model = FCSwitchedVAE(args.y_ce_beta, args.y_phsic_beta, args.y_mmd_beta, args.z_beta, args.z2_beta,
-                          args.channels, args.n_branches, args.n_switches).to(device)
+    model = FCSwitchedVAE(args.y_ce_beta, args.y_hsic_beta, args.y_mmd_beta, args.z_hsic_beta, args.z_kl_beta,
+                          args.z2_kl_beta, args.channels, args.n_branches, args.n_switches, args.n_dims_sm,
+                          args.fc_operator_type, args.fc_switch_type).to(device)
 
     for ckpt in os.listdir(args.save_dir):
         if ckpt[-5:] != '.ckpt' or (args.ckpts and ckpt not in args.ckpts):
@@ -145,18 +150,18 @@ def eval_visual(vis, n_samples=10):
             for i, batch in enumerate(eval_loader):
                 _, inputs = batch
                 x = inputs.to(device).float()
-                recon_x, z2, z2_mean, z2_logvar, ys_logits, ys_logits_2, ys_index, ys_hard, zs_mean, zs_logvar, zs = model(x)
+                recon_x, z2, _, _, _, _, ys_idx, ys, zs_mean, zs_logvar, zs = model(x)
                 true_images.append(x.cpu())
                 recon_images.append(torch.sigmoid(recon_x).cpu())
 
-                for i, (y_index, z_mean, z_logvar) in enumerate(zip(ys_index, zs_mean, zs_logvar)):
-                    print('[%d]: y_index: %d, z_mean: %.4f, z_std: %.4f' %
-                          (i, y_index.item(), z_mean.item(), (z_logvar/2).exp()))
+                for i, (y_idx, z_mean, z_logvar) in enumerate(zip(ys_idx, zs_mean, zs_logvar)):
+                    print('[%d]: y_idx: %d, z_mean: %s, z_std: %s' %
+                          (i, y_idx.item(), str(z_mean.cpu().numpy()), str((z_logvar/2).exp().cpu().numpy())))
 
-                z2_tr, ys_index_tr, ys_hard_tr, zs_tr, interpolation = \
-                    traversal(z2, ys_index, ys_hard, zs, args.n_branches, args.n_switches,
-                              limit=args.traversal_limit, inter=args.traversal_inter)
-                images_tr = torch.sigmoid(model.decoder(z2_tr, ys_index_tr, ys_hard_tr, zs_tr)).cpu()  # n_images x C x H x W
+                z2_tr, ys_idx_tr, ys_tr, zs_tr, interpolation = \
+                    traversal(z2, ys_idx, ys, zs, args.n_branches, args.n_switches,
+                              args.traversal_limit, args.traversal_inter)
+                images_tr = torch.sigmoid(model.decoder(z2_tr, ys_idx_tr, ys_tr, zs_tr)).cpu()  # n_images x C x H x W
 
                 vis.images(images_tr, env=os.path.join(args.model, args.dataset, args.exp_id), nrow=interpolation.size(0),
                            opts=dict(title='Latent Space Traversal (iter:%d)' % step))
@@ -180,7 +185,6 @@ def eval_visual(vis, n_samples=10):
             images = make_grid(images, nrow=2)
             vis.images(images, env=os.path.join(args.model, args.dataset, args.exp_id),
                        opts=dict(title='Reconstruction (iter:%d)' % step))
-
 
 
 def eval():
